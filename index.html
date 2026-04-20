@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dhwaja Poster Editor</title>
+  <style>
+    :root{
+      --bg:#2b1111;
+      --panel:#1d0f0fcc;
+      --accent:#f2c36b;
+      --text:#fff7e6;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:Arial,Helvetica,sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    .app{
+      min-height:100vh;
+      display:grid;
+      grid-template-columns:320px 1fr;
+      gap:16px;
+      padding:16px;
+    }
+    .panel{
+      background:var(--panel);
+      border:1px solid rgba(242,195,107,.35);
+      border-radius:16px;
+      padding:16px;
+      position:sticky;
+      top:16px;
+      height:fit-content;
+    }
+    h1{
+      margin:0 0 12px;
+      font-size:22px;
+      color:var(--accent);
+    }
+    p{line-height:1.45}
+    .control{margin-bottom:14px}
+    .control label{
+      display:block;
+      margin-bottom:6px;
+      color:var(--accent);
+      font-size:14px;
+    }
+    input[type="file"],input[type="range"],button{
+      width:100%;
+    }
+    input[type="range"]{accent-color:var(--accent)}
+    button{
+      border:0;
+      padding:12px 14px;
+      border-radius:12px;
+      cursor:pointer;
+      background:linear-gradient(180deg,#ffda8a,#d59d3d);
+      color:#3a1700;
+      font-weight:700;
+      margin-bottom:10px;
+    }
+    button.secondary{
+      background:transparent;
+      color:var(--text);
+      border:1px solid rgba(255,255,255,.25);
+    }
+    .workspace{
+      display:flex;
+      align-items:flex-start;
+      justify-content:center;
+      overflow:auto;
+    }
+    .canvas-wrap{
+      width:min(100%,1100px);
+      background:#00000022;
+      border-radius:18px;
+      padding:8px;
+    }
+    canvas{
+      width:100%;
+      height:auto;
+      display:block;
+      border-radius:16px;
+      box-shadow:0 14px 40px rgba(0,0,0,.35);
+      touch-action:none;
+      background:#3d1a12;
+    }
+    .status{
+      min-height:20px;
+      font-size:13px;
+      color:#ffe2ab;
+      margin-top:8px;
+      white-space:pre-line;
+    }
+    .small{
+      font-size:12px;
+      opacity:.85;
+    }
+    @media (max-width:900px){
+      .app{grid-template-columns:1fr}
+      .panel{position:static}
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="panel">
+      <h1>Poster Editor</h1>
+      <p>Upload person photo, drag to move, resize, rotate, then save or share.</p>
+
+      <div class="control">
+        <label for="personInput">Upload person photo</label>
+        <input id="personInput" type="file" accept="image/*">
+      </div>
+
+      <div class="control">
+        <label for="scaleRange">Resize</label>
+        <input id="scaleRange" type="range" min="0.1" max="3" step="0.01" value="1">
+      </div>
+
+      <div class="control">
+        <label for="rotateRange">Rotate</label>
+        <input id="rotateRange" type="range" min="-45" max="45" step="1" value="0">
+      </div>
+
+      <button id="saveBtn">Save PNG</button>
+      <button id="shareBtn" class="secondary">Share</button>
+
+      <div class="small">
+        Upload this file as <b>index.html</b> and keep your poster image in the same folder as <b>background.png</b>.
+        <br><br>
+        Best results:
+        <br>• Open via GitHub Pages
+        <br>• Share works best on mobile Chrome/Safari
+        <br>• If share is not supported, use Save PNG
+      </div>
+
+      <div class="status" id="status">Loading background...</div>
+    </aside>
+
+    <main class="workspace">
+      <div class="canvas-wrap">
+        <canvas id="posterCanvas" width="1600" height="900"></canvas>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const BACKGROUND_URL = "./background.png";
+
+    const canvas = document.getElementById('posterCanvas');
+    const ctx = canvas.getContext('2d');
+    const personInput = document.getElementById('personInput');
+    const scaleRange = document.getElementById('scaleRange');
+    const rotateRange = document.getElementById('rotateRange');
+    const saveBtn = document.getElementById('saveBtn');
+    const shareBtn = document.getElementById('shareBtn');
+    const statusEl = document.getElementById('status');
+
+    let bgImg = new Image();
+    let personImg = null;
+
+    let personState = {
+      x: canvas.width * 0.5,
+      y: canvas.height * 0.73,
+      scale: 1,
+      rotation: 0,
+      baseWidth: 300,
+      baseHeight: 400,
+      dragging: false,
+      dragOffsetX: 0,
+      dragOffsetY: 0
+    };
+
+    function setStatus(msg) {
+      statusEl.textContent = msg || '';
+    }
+
+    function drawBackgroundCover(img) {
+      const imgRatio = img.width / img.height;
+      const canvasRatio = canvas.width / canvas.height;
+      let sx, sy, sw, sh;
+
+      if (imgRatio > canvasRatio) {
+        sh = img.height;
+        sw = sh * canvasRatio;
+        sx = (img.width - sw) / 2;
+        sy = 0;
+      } else {
+        sw = img.width;
+        sh = sw / canvasRatio;
+        sx = 0;
+        sy = (img.height - sh) / 2;
+      }
+
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (bgImg.complete && bgImg.naturalWidth > 0) {
+        drawBackgroundCover(bgImg);
+      } else {
+        ctx.fillStyle = '#4a1f14';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      if (personImg) {
+        const w = personState.baseWidth * personState.scale;
+        const h = personState.baseHeight * personState.scale;
+
+        ctx.save();
+        ctx.translate(personState.x, personState.y);
+        ctx.rotate(personState.rotation * Math.PI / 180);
+        ctx.shadowColor = 'rgba(0,0,0,0.35)';
+        ctx.shadowBlur = 20;
+        ctx.shadowOffsetY = 8;
+        ctx.drawImage(personImg, -w / 2, -h / 2, w, h);
+        ctx.restore();
+      }
+    }
+
+    function fitPersonToCanvas(img) {
+      const maxW = canvas.width * 0.25;
+      const maxH = canvas.height * 0.5;
+      const ratio = Math.min(maxW / img.width, maxH / img.height);
+
+      personState.baseWidth = img.width * ratio;
+      personState.baseHeight = img.height * ratio;
+      personState.x = canvas.width * 0.5;
+      personState.y = canvas.height * 0.73;
+      personState.scale = 1;
+      personState.rotation = 0;
+
+      scaleRange.value = 1;
+      rotateRange.value = 0;
+    }
+
+    function getPointerPos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      const touch = evt.touches ? evt.touches[0] : null;
+      const clientX = touch ? touch.clientX : evt.clientX;
+      const clientY = touch ? touch.clientY : evt.clientY;
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+
+      return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
+      };
+    }
+
+    function pointInsidePerson(px, py) {
+      if (!personImg) return false;
+      const w = personState.baseWidth * personState.scale;
+      const h = personState.baseHeight * personState.scale;
+
+      return (
+        px >= personState.x - w / 2 &&
+        px <= personState.x + w / 2 &&
+        py >= personState.y - h / 2 &&
+        py <= personState.y + h / 2
+      );
+    }
+
+    function onPointerDown(evt) {
+      if (!personImg) return;
+      const p = getPointerPos(evt);
+      if (pointInsidePerson(p.x, p.y)) {
+        personState.dragging = true;
+        personState.dragOffsetX = p.x - personState.x;
+        personState.dragOffsetY = p.y - personState.y;
+      }
+    }
+
+    function onPointerMove(evt) {
+      if (!personState.dragging) return;
+      evt.preventDefault();
+      const p = getPointerPos(evt);
+      personState.x = p.x - personState.dragOffsetX;
+      personState.y = p.y - personState.dragOffsetY;
+      render();
+    }
+
+    function onPointerUp() {
+      personState.dragging = false;
+    }
+
+    function loadBackground() {
+      bgImg = new Image();
+      bgImg.crossOrigin = "anonymous";
+
+      bgImg.onload = function () {
+        setStatus("Background loaded");
+        render();
+      };
+
+      bgImg.onerror = function () {
+        setStatus("Background not found. Upload background.png in the same GitHub folder.");
+        render();
+      };
+
+      bgImg.src = BACKGROUND_URL;
+    }
+
+    personInput.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          personImg = img;
+          fitPersonToCanvas(img);
+          render();
+          setStatus("Person photo loaded");
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    scaleRange.addEventListener('input', () => {
+      personState.scale = parseFloat(scaleRange.value);
+      render();
+    });
+
+    rotateRange.addEventListener('input', () => {
+      personState.rotation = parseFloat(rotateRange.value);
+      render();
+    });
+
+    canvas.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', onPointerUp);
+
+    canvas.addEventListener('touchstart', onPointerDown, { passive: true });
+    window.addEventListener('touchmove', onPointerMove, { passive: false });
+    window.addEventListener('touchend', onPointerUp);
+
+    saveBtn.addEventListener('click', () => {
+      try {
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = 'dhwaja_poster.png';
+        link.click();
+        setStatus("PNG downloaded");
+      } catch (e) {
+        console.error(e);
+        setStatus("Save failed. Open through GitHub Pages in Chrome/Safari.");
+      }
+    });
+
+    shareBtn.addEventListener('click', async () => {
+      try {
+        if (!navigator.share) {
+          setStatus("Share not supported here. Use Save PNG.");
+          return;
+        }
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) {
+          setStatus("Could not prepare image for sharing.");
+          return;
+        }
+
+        const file = new File([blob], 'dhwaja_poster.png', { type: 'image/png' });
+
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: 'Dhwaja Poster',
+            text: 'Sharing poster',
+            files: [file]
+          });
+          setStatus("Shared successfully");
+        } else {
+          setStatus("This browser cannot share image files. Use Save PNG.");
+        }
+      } catch (e) {
+        console.error(e);
+        setStatus("Share cancelled or failed. On desktop, use Save PNG.");
+      }
+    });
+
+    loadBackground();
+    render();
+  </script>
+</body>
+</html>
